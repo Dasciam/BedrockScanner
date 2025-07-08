@@ -49,6 +49,7 @@ go build -o asn_to_ranges cmd/asn_to_ranges.go
 4. Process results with custom tools
 
 The scanner outputs results in a SQLite table.
+![image](https://github.com/user-attachments/assets/4d760781-3dac-472c-93cc-4e0bcb7902e0)
 
 ## Notes
 - The scanner respects the specified packets-per-second rate across all sockets
