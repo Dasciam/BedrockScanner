@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 func main() {
@@ -26,6 +27,8 @@ func main() {
 		what       string
 		pps        int
 		numSockets int
+
+		timeout int
 
 		rescan  bool
 		rewrite bool
@@ -37,6 +40,7 @@ func main() {
 	flag.IntVar(&numSockets, "num-sockets", 1, "Number of sockets")
 	flag.BoolVar(&rescan, "rescan", false, "Rescan all servers in the database")
 	flag.BoolVar(&rewrite, "rewrite", false, "Mark all servers as offline in the database before the scan")
+	flag.IntVar(&timeout, "timeout", 60, "Timeout time for sockets (in seconds)")
 	flag.Parse()
 
 	if numSockets < 0 {
@@ -117,7 +121,7 @@ func main() {
 
 	for _, socket := range sockets {
 		readWorkerWg.Add(1)
-		go scanner.ReadWorker(socket, output.NewMulti(outputs...), &readWorkerWg, done)
+		go scanner.ReadWorker(socket, output.NewMulti(outputs...), &readWorkerWg, time.Duration(timeout)*time.Second)
 	}
 
 	limiter := limit.NewBasicLimiter(pps)
