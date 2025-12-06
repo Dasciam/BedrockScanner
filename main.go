@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/dasciam/bedrockscanner/data"
 	"github.com/dasciam/bedrockscanner/limit"
 	"github.com/dasciam/bedrockscanner/output"
 	"github.com/dasciam/bedrockscanner/ranges"
@@ -18,69 +19,82 @@ import (
 	"sync"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
-
 func main() {
 	var (
-		scanWhat         string
-		writeToFile      string
-		packetsPerSecond int
-		numSockets       int
+		dbPath string
+
+		what       string
+		pps        int
+		numSockets int
+
+		rescan  bool
+		rewrite bool
 	)
 
-	flag.StringVar(&scanWhat, "what", "ALL", "What to scan (subnet, file path or ALL)")
-	flag.IntVar(&packetsPerSecond, "packets-per-second", 5_000, "Number of max packers per second")
-	flag.StringVar(&writeToFile, "write-to-file", "", "Path to the file to write results to")
+	flag.StringVar(&what, "what", "ALL", "What to scan (subnet, file path or ALL)")
+	flag.IntVar(&pps, "packets-per-second", 5_000, "Number of max packers per second")
+	flag.StringVar(&dbPath, "db", "result.db", "Path to output/input DB")
 	flag.IntVar(&numSockets, "num-sockets", 1, "Number of sockets")
+	flag.BoolVar(&rescan, "rescan", false, "Rescan all servers in the database")
+	flag.BoolVar(&rewrite, "rewrite", false, "Mark all servers as offline in the database before the scan")
 	flag.Parse()
 
-	log.Printf("Settings:\n- Subnet/file: %s\n- PPS (Packets/s): %d\n- Write to file: %s\n", scanWhat, packetsPerSecond, func() string {
-		if writeToFile != "" {
-			return writeToFile
-		}
-		return "(none)"
-	}())
+	if numSockets < 0 {
+		panic("num-sockets must be >= 0")
+	} else if numSockets == 0 {
+		numSockets = 1
+	}
+	if dbPath == "" {
+		panic("db path not specified")
+	}
+	db := data.New(dbPath)
+
+	log.Printf("Settings:\n- Subnet/file: %s\n- PPS (Packets/s): %d\n- DB: %s", what, pps, dbPath)
 
 	var rng []ranges.Addr
 
-	parsePrefix, err := netip.ParsePrefix(scanWhat)
-	if err == nil {
-		rng = append(rng, ranges.NewNetIP(parsePrefix))
+	if rescan {
+		rng = append(rng, scanner.RangeFromInput(db))
 	} else {
-		if strings.ToLower(scanWhat) == "all" {
-			const partCount = 64
-			const part = math.MaxUint32 / partCount
-
-			for i := 0; i < partCount; i++ {
-				if i == partCount-1 {
-					rng = append(rng, ranges.NewUInt32(uint32(part*i), math.MaxUint32))
-					break
-				}
-				rng = append(rng, ranges.NewUInt32(uint32(part*i), uint32(part*(i+1))))
-			}
-			goto next
-		}
-		data, err := os.ReadFile(scanWhat)
+		parsePrefix, err := netip.ParsePrefix(what)
 		if err != nil {
-			log.Fatal(err)
-		}
-		rng = lo.FilterMap(bytes.Split(data, []byte("\n")), func(v []byte, _ int) (ranges.Addr, bool) {
-			prefix, err := netip.ParsePrefix(string(v))
-			if err != nil {
-				log.Printf("Error parsing prefix from file %s: %v", scanWhat, err)
-				return nil, false
+			switch {
+			case strings.ToLower(what) == "all":
+				const partCount = 64
+				const part = math.MaxUint32 / partCount
+
+				for i := 0; i < partCount; i++ {
+					if i == partCount-1 {
+						rng = append(rng, ranges.NewUInt32(uint32(part*i), math.MaxUint32))
+						break
+					}
+					rng = append(rng, ranges.NewUInt32(uint32(part*i), uint32(part*(i+1))))
+				}
+			default:
+				contents, err := os.ReadFile(what)
+				if err != nil {
+					log.Fatal(err)
+				}
+				rng = lo.FilterMap(bytes.Split(contents, []byte("\n")), func(v []byte, _ int) (ranges.Addr, bool) {
+					prefix, err := netip.ParsePrefix(string(v))
+					if err != nil {
+						log.Printf("Error parsing prefix from file %s: %v", what, err)
+						return nil, false
+					}
+					return ranges.NewNetIP(prefix), true
+				})
 			}
-			return ranges.NewNetIP(prefix), true
-		})
+		} else {
+			rng = append(rng, ranges.NewNetIP(parsePrefix))
+		}
 	}
-next:
+
+	if rewrite {
+		db.FlagOffline()
+	}
 
 	var sockets []net.PacketConn
 
-	if numSockets <= 0 {
-		panic("got negative number of sockets")
-	}
 	for range numSockets {
 		conn, err := net.ListenPacket("udp", ":0")
 		if err != nil {
@@ -89,12 +103,10 @@ next:
 		sockets = append(sockets, conn)
 	}
 
-	var outputs []scanner.Output
-
-	if writeToFile != "" {
-		outputs = append(outputs, output.NewDatabase(writeToFile))
+	outputs := []scanner.Output{
+		output.Print{},
+		db,
 	}
-	outputs = append(outputs, output.Print{})
 
 	var (
 		wg           sync.WaitGroup
@@ -108,7 +120,7 @@ next:
 		go scanner.ReadWorker(socket, output.NewMulti(outputs...), &readWorkerWg, done)
 	}
 
-	limiter := limit.NewBasicLimiter(packetsPerSecond)
+	limiter := limit.NewBasicLimiter(pps)
 
 	for i, r := range rng {
 		wg.Add(1)

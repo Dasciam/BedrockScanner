@@ -10,10 +10,12 @@ The primary scanning utility that probes Minecraft Bedrock servers within specif
 #### Usage:
 ```bash
 ./bedrockscanner \
-    -what <target> \                     # What to scan (single subnet, file with subnets, or ALL; default: ALL)
-    -packets-per-second <rate> \         # Packets per second to send (default: 5000)
-    -write-to-file <filename> \          # Output file for results (optional)
-    -num-sockets <count>                 # Number of sockets to use (default: 1)
+    -what <target> \              # What to scan (single subnet, file with subnets, or ALL; default: ALL)
+    -packets-per-second <rate> \  # Packets per second to send (default: 5000)
+    -db <filename> \              # Output/input file (default: result.db)
+    -num-sockets <count>          # Number of sockets to use (default: 1)
+    -rescan                       # Rescan all servers in the input database
+    -rewrite                      # Mark all servers in db as offline (for filtering)
 ```
 
 #### Target options for `-what`:
